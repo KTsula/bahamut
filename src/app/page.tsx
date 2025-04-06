@@ -18,11 +18,6 @@ interface GasData {
   Value: string;
 }
 
-// Add console log at the top level to check environment variables
-console.log('Environment variables check:', {
-  etherscanApiKey: process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || 'not set'
-});
-
 export default function Home() {
   const [contractAddress, setContractAddress] = useState('');
   const [transactionCount, setTransactionCount] = useState<number | null>(null);
@@ -224,7 +219,7 @@ export default function Home() {
             apikey: process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY
           }
         });
-        console.log(response.data.result)
+        // console.log(response.data.result)
         if (response.data.status === '1') {
           const transactions = response.data.result;
           
@@ -380,7 +375,6 @@ export default function Home() {
       
       // Use the public environment variable
       const apiKey = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || "None";
-      console.log('Using API key:', apiKey);
       
       const response = await axios.get(`https://api.etherscan.io/api`, {
         params: {
