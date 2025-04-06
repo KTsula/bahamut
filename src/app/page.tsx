@@ -18,6 +18,11 @@ interface GasData {
   Value: string;
 }
 
+// Add console log at the top level to check environment variables
+console.log('Environment variables check:', {
+  etherscanApiKey: process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || 'not set'
+});
+
 export default function Home() {
   const [contractAddress, setContractAddress] = useState('');
   const [transactionCount, setTransactionCount] = useState<number | null>(null);
@@ -32,6 +37,9 @@ export default function Home() {
   const [potentialBahamutEarnings, setPotentialBahamutEarnings] = useState<number | null>(null);
   const [potentialEarningsUsd, setPotentialEarningsUsd] = useState<number | null>(null);
   const [showDeployer, setShowDeployer] = useState(false);
+  const [contractTooNew, setContractTooNew] = useState(false);
+  const [contractCreationDate, setContractCreationDate] = useState<string | null>(null);
+  const [lastAnalyzedAddress, setLastAnalyzedAddress] = useState<string>('');
 
   // Constants for conversion
   const GWEI_TO_FTN = 1 / 2300000;  // Conversion rate from gwei to FTN
@@ -185,9 +193,14 @@ export default function Home() {
 
     setLoading(true);
     setError('');
+    // Reset all previous data
     setTransactionCount(null);
     setTotalGasUsed(null);
     setGasUsageGrowth(null);
+    setContractTooNew(false);
+    setContractCreationDate(null);
+    setPotentialBahamutEarnings(null);
+    setPotentialEarningsUsd(null);
     
     try {
       let totalTransactions = 0;
@@ -307,22 +320,44 @@ export default function Home() {
         console.log(`Earliest transaction timestamp: ${earliestTimestamp}`);
         console.log(`Earliest transaction date: ${formattedDate}`);
         
-        // Calculate gas usage growth from this date to the most recent date
-        const growth = calculateGasGrowth(formattedDate);
-        if (growth !== null) {
-          setGasUsageGrowth(growth);
-          
-          // Calculate potential Bahamut earnings
-          const earnings = calculateBahamutEarnings(gasUsedSum, growth);
-          if (earnings !== null) {
-            setPotentialBahamutEarnings(earnings.ftn);
-            setPotentialEarningsUsd(earnings.usd);
+        // Save contract creation date
+        setContractCreationDate(formattedDate);
+        
+        // Check if the contract is less than 2 days old
+        const twoDaysAgo = new Date();
+        twoDaysAgo.setDate(twoDaysAgo.getDate() - 2);
+        
+        if (date > twoDaysAgo) {
+          console.log("Contract is too new (less than 2 days old)");
+          setContractTooNew(true);
+        } else {
+          // Calculate gas usage growth from this date to the most recent date
+          const growth = calculateGasGrowth(formattedDate);
+          if (growth !== null) {
+            setGasUsageGrowth(growth);
+            
+            // Calculate potential Bahamut earnings
+            const earnings = calculateBahamutEarnings(gasUsedSum, growth);
+            if (earnings !== null) {
+              setPotentialBahamutEarnings(earnings.ftn);
+              setPotentialEarningsUsd(earnings.usd);
+            }
           }
         }
       }
     
       setTransactionCount(totalTransactions);
       setTotalGasUsed(gasUsedSum);
+      // Always update the last analyzed address, even for contracts with no transactions
+      setLastAnalyzedAddress(contractAddress);
+      
+      // Handle case when no transactions are found
+      if (totalTransactions === 0) {
+        console.log("No transactions found for this contract");
+        // Reset source code if no transactions found
+        setContractCode(null);
+        setShowCode(false);
+      }
     } catch (err) {
       setError('Error fetching transaction count');
       console.error(err);
@@ -343,8 +378,8 @@ export default function Home() {
     try {
       console.log('Fetching contract code for address:', contractAddress);
       
-      // Use the hardcoded API key directly since the env variables might not be loading correctly
-      const apiKey = "8RCZA2F3E194XJ2NU6GBNYWZU54IPQHTJC";
+      // Use the public environment variable
+      const apiKey = process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || "None";
       console.log('Using API key:', apiKey);
       
       const response = await axios.get(`https://api.etherscan.io/api`, {
@@ -370,11 +405,16 @@ export default function Home() {
           setActiveTab('code');
         }
       } else {
-        setError(response.data.message || 'Failed to fetch contract code');
+        // Instead of showing API error message, use a more user-friendly message
+        if (response.data.message && response.data.message.includes('NOTOK')) {
+          setError('No verified source code available for this contract');
+        } else {
+          setError(response.data.message || 'Failed to fetch contract code');
+        }
       }
     } catch (err) {
       console.error('Error fetching contract code:', err);
-      setError('Error fetching contract code: ' + (err instanceof Error ? err.message : String(err)));
+      setError('Unable to retrieve source code. Please try again later.');
     } finally {
       setLoading(false);
     }
@@ -382,14 +422,20 @@ export default function Home() {
 
   const analyzeContract = async () => {
     setActiveTab('analyze');
-    if (!transactionCount) {
+    
+    // Only rerun analysis if the contract address has changed or no analysis was run before
+    if (contractAddress !== lastAnalyzedAddress) {
+      console.log(`Running analysis for new contract: ${contractAddress} (previously analyzed: ${lastAnalyzedAddress})`);
       await getTransactionCount();
+    } else {
+      console.log(`Skipping analysis for already analyzed contract: ${contractAddress}`);
     }
   };
 
   const viewSourceCode = async () => {
     setActiveTab('code');
     if (!contractCode) {
+      setLoading(true);
       await getContractCode();
     }
   };
@@ -411,12 +457,6 @@ export default function Home() {
             <h1 className="text-4xl font-bold bg-gradient-to-r from-[#E6007A] to-[#9B4BE7] text-transparent bg-clip-text py-4">
               Contract Analytics
             </h1>
-            <button 
-              onClick={handleDeployClick}
-              className="bg-[#E6007A] hover:bg-[#FF1A8C] text-white px-6 py-2 rounded-lg font-medium transition-all"
-            >
-              Build on Bahamut
-            </button>
           </div>
         </div>
       </div>
@@ -486,8 +526,40 @@ export default function Home() {
           {/* Results Section */}
           {activeTab === 'analyze' && transactionCount !== null && (
             <div className="mt-8 space-y-6">
+              {/* Contract Too New Error */}
+              {contractTooNew && (
+                <div className="bg-yellow-50 border border-yellow-200 rounded-xl p-6 text-yellow-800 shadow-sm">
+                  <div className="flex items-start">
+                    <svg className="w-6 h-6 mr-3 text-yellow-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <h3 className="text-lg font-medium mb-2">Contract Too New to Evaluate</h3>
+                      <p className="mb-2">This contract was created {contractCreationDate ? `on ${contractCreationDate}` : 'recently'} and is less than 2 days old.</p>
+                      <p>Potential earnings calculations require at least 2 days of historical data to provide accurate estimates.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* No Transactions Found Message */}
+              {transactionCount === 0 && (
+                <div className="bg-gray-50 border border-gray-200 rounded-xl p-6 text-gray-700 shadow-sm">
+                  <div className="flex items-start">
+                    <svg className="w-6 h-6 mr-3 text-gray-500" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2h-1V9a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                    <div>
+                      <h3 className="text-lg font-medium mb-2">No Transaction History</h3>
+                      <p>This contract address has no transaction history on the Ethereum network.</p>
+                      <p className="mt-2">Double-check the address or try a different contract.</p>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
               {/* Potential Bahamut Earnings - Main highlighted stat */}
-              {potentialBahamutEarnings !== null && (
+              {potentialBahamutEarnings !== null && !contractTooNew && transactionCount > 0 && (
                 <div className="bg-gradient-to-r from-[#E6007A] to-[#9B4BE7] rounded-xl p-8 text-white text-center shadow-lg">
                   <h3 className="text-xl font-medium mb-2">Potential Earnings on Bahamut</h3>
                   <p className="text-5xl font-bold mb-2">{formatLargeNumber(potentialBahamutEarnings)} FTN</p>
@@ -520,13 +592,25 @@ export default function Home() {
             </div>
           )}
 
-          {activeTab === 'code' && contractCode && (
+          {activeTab === 'code' && (
             <div className="mt-8">
               <div className="bg-gray-50 rounded-xl p-6 border border-gray-100">
                 <h3 className="text-[#9B4BE7] text-sm font-medium mb-4">Contract Source Code</h3>
-                <pre className="bg-white border border-gray-200 p-4 rounded-lg overflow-x-auto text-gray-700 text-sm">
-                  <code>{contractCode}</code>
-                </pre>
+                {contractCode ? (
+                  <pre className="bg-white border border-gray-200 p-4 rounded-lg overflow-x-auto text-gray-700 text-sm">
+                    <code>{contractCode}</code>
+                  </pre>
+                ) : (
+                  <div className="bg-white border border-gray-200 p-8 rounded-lg text-center text-gray-500">
+                    <svg className="w-12 h-12 mx-auto mb-3 text-gray-300" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                    </svg>
+                    <p className="mb-2 font-medium">No Source Code Available</p>
+                    <p className="text-sm">
+                      {error || 'This contract does not have verified source code on Etherscan.'}
+                    </p>
+                  </div>
+                )}
               </div>
             </div>
           )}
@@ -560,6 +644,7 @@ export default function Home() {
         <ContractDeployer 
           contractAddress={contractAddress}
           onClose={handleCloseDeployer}
+          etherscanApiKey={process.env.NEXT_PUBLIC_ETHERSCAN_API_KEY || "8RCZA2F3E194XJ2NU6GBNYWZU54IPQHTJC"}
         />
       )}
     </main>

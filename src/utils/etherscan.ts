@@ -2,15 +2,25 @@
  * Fetches contract data from Etherscan API
  */
 export async function fetchContractFromEtherscan(address: string, apiKey: string) {
+  console.log(`Attempting to fetch contract ${address} with API key: ${apiKey.substring(0, 4)}...`);
+  
+  if (apiKey === "None" || !apiKey) {
+    console.error("Invalid API key provided");
+    throw new Error("Valid Etherscan API key is required");
+  }
+  
   const url = `https://api.etherscan.io/api?module=contract&action=getsourcecode&address=${address}&apikey=${apiKey}`;
   
   try {
+    console.log("Fetching from URL:", url);
     const res = await fetch(url);
     const data = await res.json();
     
     console.log("Raw Etherscan API response:", data);
+    console.log("API Response status:", data.status, "message:", data.message);
     
     if (data.status !== '1' || !data.result || data.result.length === 0) {
+      console.error("API Error:", data.message || "Unknown error");
       throw new Error(data.message || 'Failed to fetch contract data');
     }
     
